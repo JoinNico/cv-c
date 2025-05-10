@@ -1,5 +1,9 @@
 #include "image.h"
+#include "utils.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 // 图像创建与释放
 Image create_image(int width, int height, int channels) {
     Image img;

@@ -1,56 +1,112 @@
 #include "spm.h"
-#include <math.h>
+#include "kmeans.h"
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 
-// 构建空间金字塔
-SPMPyramid* build_spm_pyramid(SiftFeature* features, int num_features,
-                              KMeansModel* model, int level) {
-    SPMPyramid* pyramid = (SPMPyramid*)malloc(sizeof(SPMPyramid));
-    pyramid->level = level;
-    pyramid->vocab_size = model->k;
+// 将图像分成金字塔层次的网格并提取描述符
+DescriptorList* extract_pyramid_descriptors(const Image* img, int level) {
+    // 根据 SPM 的 level，将图像分成网格
+    int grid_size = 1 << level; // 2^level
+    DescriptorList* descriptors = (DescriptorList*)malloc(grid_size * grid_size * sizeof(DescriptorList));
 
-    // 计算总直方图维度: vocab_size * sum(4^l) for l=0..level
-    int total_dim = model->k;
-    for (int l = 1; l <= level; l++) {
-        total_dim += model->k * (1 << (2*l));
-    }
-    pyramid->histograms = (int*)calloc(total_dim, sizeof(int));
+    int cell_width = img->width / grid_size;
+    int cell_height = img->height / grid_size;
 
-    // 构建每一层的直方图
-    int offset = 0;
-    for (int l = 0; l <= level; l++) {
-        int cells = 1 << (2*l); // 4^l个cell
-        int cell_hist_size = model->k * cells;
-
-        // 计算每个cell的边界
-        float cell_width = 1.0f / (1 << l);
-        float cell_height = 1.0f / (1 << l);
-
-        // 初始化当前层的直方图
-        int* level_hist = pyramid->histograms + offset;
-
-        // 对每个特征分配到对应的cell和视觉词
-        for (int i = 0; i < num_features; i++) {
-            SiftFeature* feat = &features[i];
-
-            // 归一化坐标到[0,1]
-            float nx = feat->x / IMAGE_WIDTH;
-            float ny = feat->y / IMAGE_HEIGHT;
-
-            // 确定cell索引
-            int cell_x = (int)(nx / cell_width);
-            int cell_y = (int)(ny / cell_height);
-            int cell_idx = cell_y * (1 << l) + cell_x;
-
-            // 预测视觉词
-            int word = predict_kmeans_single(model, feat->descriptor);
-
-            // 更新直方图
-            level_hist[cell_idx * model->k + word]++;
+    for (int i = 0; i < grid_size; i++) {
+        for (int j = 0; j < grid_size; j++) {
+            descriptors[i * grid_size + j] = extract_region_descriptors(
+                    img, j * cell_width, i * cell_height, cell_width, cell_height);
         }
-
-        offset += cell_hist_size;
     }
 
-    return pyramid;
+    return descriptors;
+}
+
+// 从一个区域提取描述符
+DescriptorList extract_region_descriptors(const Image* img, int x, int y, int width, int height) {
+    DescriptorList descriptors;
+    // 简单的占位符实现
+    descriptors.count = (width * height) / 100; // 假设每 100 个像素提取一个描述符
+    descriptors.descriptors = (Descriptor*)malloc(descriptors.count * sizeof(Descriptor));
+
+    for (int i = 0; i < descriptors.count; i++) {
+        // 模拟填充描述符
+        descriptors.descriptors[i].data = (float*)malloc(128 * sizeof(float)); // 假设每个描述符有 128 维
+        memset(descriptors.descriptors[i].data, 0, 128 * sizeof(float));
+    }
+
+    return descriptors;
+}
+
+// 构建空间金字塔直方图
+SpmHistogram build_spatial_pyramid(const Image* img, Codebook* codebook, int level) {
+    SpmHistogram hist;
+    int total_bins = codebook->size * ((1 << (2 * (level + 1))) - 1) / 3; // 计算所有金字塔层的总 bin 数
+    hist.histogram = (float*)calloc(total_bins, sizeof(float));
+    hist.length = total_bins;
+
+    DescriptorList* descriptors = extract_pyramid_descriptors(img, level);
+
+    // 根据描述符更新直方图
+    for (int i = 0; i < (1 << level) * (1 << level); i++) {
+        for (int j = 0; j < descriptors[i].count; j++) {
+            int bin = kmeans_assign_to_cluster(codebook, descriptors[i].descriptors[j].data);
+            hist.histogram[bin]++;
+        }
+        free(descriptors[i].descriptors);
+    }
+    free(descriptors);
+
+    return hist;
+}
+
+// 释放SPM直方图
+void free_spm_histogram(SpmHistogram* hist) {
+    if (hist && hist->histogram) {
+        free(hist->histogram);
+        hist->histogram = NULL;
+        hist->length = 0;
+    }
+}
+
+// 计算两个SPM直方图之间的相似度（使用chi-square距离）
+float compute_spm_similarity(const SpmHistogram* hist1, const SpmHistogram* hist2) {
+    if (!hist1 || !hist2 || hist1->length != hist2->length) {
+        return -1.0f; // 错误处理
+    }
+
+    float similarity = 0.0f;
+    for (int i = 0; i < hist1->length; i++) {
+        if (hist1->histogram[i] + hist2->histogram[i] > 0) {
+            float diff = hist1->histogram[i] - hist2->histogram[i];
+            similarity += (diff * diff) / (hist1->histogram[i] + hist2->histogram[i]);
+        }
+    }
+
+    return 1.0f - similarity; // 返回相似度
+}
+
+// 从图像构建码本
+Codebook build_codebook_from_images(Image* images, int num_images, int voc_size) {
+    Codebook codebook;
+    codebook.size = voc_size;
+    codebook.centroids = (float**)malloc(voc_size * sizeof(float*));
+
+    // 模拟 KMeans 训练
+    for (int i = 0; i < voc_size; i++) {
+        codebook.centroids[i] = (float*)malloc(128 * sizeof(float)); // 假设每个特征有 128 维
+        memset(codebook.centroids[i], 0, 128 * sizeof(float));
+    }
+
+    return codebook;
+}
+
+// 计算一组图像的SPM特征
+SpmHistogram* compute_spm_features(Image* images, int num_images, Codebook* codebook, int level) {
+    SpmHistogram* histograms = (SpmHistogram*)malloc(num_images * sizeof(SpmHistogram));
+    for (int i = 0; i < num_images; i++) {
+        histograms[i] = build_spatial_pyramid(&images[i], codebook, level);
+    }
+    return histograms;
 }

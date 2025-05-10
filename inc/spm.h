@@ -2,6 +2,7 @@
 #define SPM_H
 
 #include "kmeans.h"
+#include "image.h"
 
 // SPM级别定义
 #define SPM_LEVEL_0 0  // 1x1网格

@@ -1,5 +1,8 @@
 #include "sift.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 // 添加关键点到列表
 static void add_keypoint(KeyPointList* list, float x, float y, float scale, float orientation) {
     KeyPoint* new_points = (KeyPoint*)realloc(list->points, (list->count + 1) * sizeof(KeyPoint));
