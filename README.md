@@ -4,7 +4,6 @@
 cv-c/
 ├── CMakeLists.txt              # CMake配置
 ├── src/
-│   ├── CMakeLists.txt          # 生产代码构建配置
 │   ├── main.c                  # 主程序入口
 │   ├── image.c                 # 图像处理实现
 │   ├── sift.c                  # SIFT特征实现
